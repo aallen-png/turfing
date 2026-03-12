@@ -8,7 +8,7 @@ export interface StreetSegment {
 }
 
 /**
- * Calculate the length of a street segment in meters
+ * Calculate the length of a street segment in meters using Haversine
  */
 function calculateStreetLength(street: StreetSegment): number {
   let totalLength = 0;
@@ -17,15 +17,15 @@ function calculateStreetLength(street: StreetSegment): number {
     const p1 = street.coordinates[i];
     const p2 = street.coordinates[i + 1];
 
-    const R = 6371000;
+    const R = 6371000; // Earth radius in meters
+    const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+    const dLng = (p2.lng - p1.lng) * Math.PI / 180;
     const lat1 = p1.lat * Math.PI / 180;
     const lat2 = p2.lat * Math.PI / 180;
-    const deltaLat = (p2.lat - p1.lat) * Math.PI / 180;
-    const deltaLng = (p2.lng - p1.lng) * Math.PI / 180;
 
-    const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
               Math.cos(lat1) * Math.cos(lat2) *
-              Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     totalLength += R * c;
@@ -35,102 +35,20 @@ function calculateStreetLength(street: StreetSegment): number {
 }
 
 /**
- * Estimate doors for streets (both sides)
+ * Calculate doors for a single street
+ * More conservative: ~8 houses per 100m (both sides, accounting for gaps)
  */
-function estimateDoorsForStreets(streets: StreetSegment[]): number {
-  const totalLength = streets.reduce((sum, street) => sum + calculateStreetLength(street), 0);
-  // ~10 houses per 100m (covering both sides of street)
-  return Math.max(Math.round(totalLength * 0.1), 5);
+function calculateDoorsForStreet(street: StreetSegment): number {
+  const lengthMeters = calculateStreetLength(street);
+  return Math.max(Math.round((lengthMeters / 100) * 8), 1);
 }
 
 /**
- * Check if two streets share an endpoint (are connected)
+ * Get center point of street
  */
-function streetsAreConnected(street1: StreetSegment, street2: StreetSegment, threshold = 0.0001): boolean {
-  const s1Start = street1.coordinates[0];
-  const s1End = street1.coordinates[street1.coordinates.length - 1];
-  const s2Start = street2.coordinates[0];
-  const s2End = street2.coordinates[street2.coordinates.length - 1];
-
-  const distance = (p1: LatLng, p2: LatLng) => {
-    return Math.sqrt(Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2));
-  };
-
-  return (
-    distance(s1Start, s2Start) < threshold ||
-    distance(s1Start, s2End) < threshold ||
-    distance(s1End, s2Start) < threshold ||
-    distance(s1End, s2End) < threshold
-  );
-}
-
-/**
- * Create a tight rectangular boundary around streets
- */
-function createTightBoundary(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
-  const lats: number[] = [];
-  const lngs: number[] = [];
-
-  for (const street of streets) {
-    for (const point of street.coordinates) {
-      if (areaBounds.contains(point)) {
-        lats.push(point.lat);
-        lngs.push(point.lng);
-      }
-    }
-  }
-
-  if (lats.length === 0) return [];
-
-  // Very small buffer - just 10 meters
-  const buffer = 0.00009;
-  const sw = areaBounds.getSouthWest();
-  const ne = areaBounds.getNorthEast();
-
-  const minLat = Math.max(Math.min(...lats) - buffer, sw.lat);
-  const maxLat = Math.min(Math.max(...lats) + buffer, ne.lat);
-  const minLng = Math.max(Math.min(...lngs) - buffer, sw.lng);
-  const maxLng = Math.min(Math.max(...lngs) + buffer, ne.lng);
-
-  return [
-    new LatLng(minLat, minLng),
-    new LatLng(minLat, maxLng),
-    new LatLng(maxLat, maxLng),
-    new LatLng(maxLat, minLng),
-    new LatLng(minLat, minLng),
-  ];
-}
-
-/**
- * Check if two rectangular polygons overlap
- */
-function rectanglesOverlap(rect1: LatLng[], rect2: LatLng[]): boolean {
-  if (rect1.length < 4 || rect2.length < 4) return false;
-
-  // Get bounds of each rectangle
-  const r1MinLat = Math.min(rect1[0].lat, rect1[2].lat);
-  const r1MaxLat = Math.max(rect1[0].lat, rect1[2].lat);
-  const r1MinLng = Math.min(rect1[0].lng, rect1[2].lng);
-  const r1MaxLng = Math.max(rect1[0].lng, rect1[2].lng);
-
-  const r2MinLat = Math.min(rect2[0].lat, rect2[2].lat);
-  const r2MaxLat = Math.max(rect2[0].lat, rect2[2].lat);
-  const r2MinLng = Math.min(rect2[0].lng, rect2[2].lng);
-  const r2MaxLng = Math.max(rect2[0].lng, rect2[2].lng);
-
-  // Check if rectangles overlap
-  return !(
-    r1MaxLat <= r2MinLat ||
-    r1MinLat >= r2MaxLat ||
-    r1MaxLng <= r2MinLng ||
-    r1MinLng >= r2MaxLng
-  );
-}
-
 function getStreetCenter(street: StreetSegment): LatLng {
-  const coords = street.coordinates;
-  const lats = coords.map(c => c.lat);
-  const lngs = coords.map(c => c.lng);
+  const lats = street.coordinates.map(c => c.lat);
+  const lngs = street.coordinates.map(c => c.lng);
   return new LatLng(
     (Math.min(...lats) + Math.max(...lats)) / 2,
     (Math.min(...lngs) + Math.max(...lngs)) / 2
@@ -138,149 +56,253 @@ function getStreetCenter(street: StreetSegment): LatLng {
 }
 
 /**
- * Build walkable routes with NO overlapping
+ * Check if two streets share endpoints (connected at intersection)
+ */
+function streetsConnected(s1: StreetSegment, s2: StreetSegment): boolean {
+  const threshold = 0.0001; // ~10 meters
+
+  const ends1 = [s1.coordinates[0], s1.coordinates[s1.coordinates.length - 1]];
+  const ends2 = [s2.coordinates[0], s2.coordinates[s2.coordinates.length - 1]];
+
+  for (const e1 of ends1) {
+    for (const e2 of ends2) {
+      const dist = Math.sqrt(
+        Math.pow(e1.lat - e2.lat, 2) + Math.pow(e1.lng - e2.lng, 2)
+      );
+      if (dist < threshold) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Create a polygon boundary that wraps around street coordinates
+ * Uses a buffer approach to create walkable area on both sides
+ */
+function createStreetPolygon(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
+  const allPoints: LatLng[] = [];
+
+  // Collect all street points and add buffered points
+  for (const street of streets) {
+    for (const point of street.coordinates) {
+      if (!areaBounds.contains(point)) continue;
+
+      allPoints.push(point);
+
+      // Add 8 buffer points around each street point (~20m radius)
+      const buffer = 0.00018; // ~20 meters
+      for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+        const buffered = new LatLng(
+          point.lat + buffer * Math.cos(angle),
+          point.lng + buffer * Math.sin(angle)
+        );
+        if (areaBounds.contains(buffered)) {
+          allPoints.push(buffered);
+        }
+      }
+    }
+  }
+
+  if (allPoints.length < 3) {
+    return createBoundingBox(streets, areaBounds);
+  }
+
+  // Create convex hull for natural boundary
+  return convexHull(allPoints);
+}
+
+/**
+ * Simple bounding box fallback
+ */
+function createBoundingBox(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
+  const lats: number[] = [];
+  const lngs: number[] = [];
+
+  for (const street of streets) {
+    for (const pt of street.coordinates) {
+      if (areaBounds.contains(pt)) {
+        lats.push(pt.lat);
+        lngs.push(pt.lng);
+      }
+    }
+  }
+
+  if (lats.length === 0) return [];
+
+  const pad = 0.00015;
+  return [
+    new LatLng(Math.min(...lats) - pad, Math.min(...lngs) - pad),
+    new LatLng(Math.min(...lats) - pad, Math.max(...lngs) + pad),
+    new LatLng(Math.max(...lats) + pad, Math.max(...lngs) + pad),
+    new LatLng(Math.max(...lats) + pad, Math.min(...lngs) - pad),
+    new LatLng(Math.min(...lats) - pad, Math.min(...lngs) - pad),
+  ];
+}
+
+/**
+ * Convex hull using gift wrapping
+ */
+function convexHull(points: LatLng[]): LatLng[] {
+  if (points.length < 3) return points;
+
+  // Find leftmost point
+  let leftmost = points[0];
+  for (const p of points) {
+    if (p.lng < leftmost.lng || (p.lng === leftmost.lng && p.lat < leftmost.lat)) {
+      leftmost = p;
+    }
+  }
+
+  const hull: LatLng[] = [];
+  let current = leftmost;
+
+  do {
+    hull.push(current);
+    let next = points[0];
+
+    for (const p of points) {
+      if (p === current) continue;
+
+      const cross = (next.lat - current.lat) * (p.lng - current.lng) -
+                   (next.lng - current.lng) * (p.lat - current.lat);
+
+      if (next === current || cross > 0) {
+        next = p;
+      }
+    }
+
+    current = next;
+  } while (current !== leftmost && hull.length < points.length);
+
+  return hull;
+}
+
+/**
+ * Check if any street in group1 is already used
+ */
+function anyStreetUsed(streets: StreetSegment[], usedIds: Set<string>): boolean {
+  return streets.some(s => usedIds.has(s.id));
+}
+
+/**
+ * Build walkable routes with strict door target
  */
 export function buildWalkableRoutes(
   allStreets: StreetSegment[],
-  targetDoorsPerRoute: number,
+  targetDoors: number,
   numRoutes: number,
   areaBounds: LatLngBounds
 ): { streets: StreetSegment[]; doorCount: number; boundary: LatLng[] }[] {
   const routes: { streets: StreetSegment[]; doorCount: number; boundary: LatLng[] }[] = [];
   const usedStreetIds = new Set<string>();
-  const existingBoundaries: LatLng[][] = [];
 
   // Filter streets within bounds
-  const streets = allStreets.filter(street =>
-    street.coordinates.some(coord => areaBounds.contains(coord))
+  const streets = allStreets.filter(s =>
+    s.coordinates.some(c => areaBounds.contains(c))
   );
 
   if (streets.length === 0) return routes;
 
-  // Sort by length (prioritize main streets)
+  // Sort by length descending (main streets first)
   const sortedStreets = [...streets].sort((a, b) =>
     calculateStreetLength(b) - calculateStreetLength(a)
   );
 
   const areaCenter = areaBounds.getCenter();
 
-  for (let routeIdx = 0; routeIdx < numRoutes; routeIdx++) {
-    // Find unused street closest to center as seed
+  // Strict door range: 80-130% of target
+  const minDoors = Math.floor(targetDoors * 0.8);
+  const maxDoors = Math.ceil(targetDoors * 1.3);
+
+  for (let i = 0; i < numRoutes; i++) {
+    // Find closest unused street to center
     let seedStreet: StreetSegment | null = null;
     let minDist = Infinity;
 
     for (const street of sortedStreets) {
-      if (!usedStreetIds.has(street.id)) {
-        const dist = getStreetCenter(street).distanceTo(areaCenter);
-        if (dist < minDist) {
-          minDist = dist;
-          seedStreet = street;
-        }
+      if (usedStreetIds.has(street.id)) continue;
+
+      const dist = getStreetCenter(street).distanceTo(areaCenter);
+      if (dist < minDist) {
+        minDist = dist;
+        seedStreet = street;
       }
     }
 
-    if (!seedStreet) break; // No more streets
+    if (!seedStreet) break;
 
+    // Start route with seed
     const routeStreets: StreetSegment[] = [seedStreet];
     usedStreetIds.add(seedStreet.id);
+    let currentDoors = calculateDoorsForStreet(seedStreet);
 
-    // Build connected walking route
-    let searching = true;
-    const maxStreetsInRoute = 6; // Limit route size
+    // Build route by adding connected/nearby streets
+    let keepSearching = true;
+    const maxStreetsPerRoute = 5;
 
-    while (searching && routeStreets.length < maxStreetsInRoute) {
-      const currentDoors = estimateDoorsForStreets(routeStreets);
-
-      // Stop if we've reached target range
-      if (currentDoors >= targetDoorsPerRoute * 0.8 && currentDoors <= targetDoorsPerRoute * 1.3) {
-        break;
-      }
-
-      // Stop if we're over
-      if (currentDoors > targetDoorsPerRoute * 1.5) {
-        break;
-      }
-
-      // Find next connected street
+    while (keepSearching && routeStreets.length < maxStreetsPerRoute && currentDoors < maxDoors) {
       let bestStreet: StreetSegment | null = null;
-      let bestScore = -1;
+      let bestScore = -Infinity;
 
-      for (const street of sortedStreets) {
-        if (usedStreetIds.has(street.id)) continue;
+      for (const candidate of sortedStreets) {
+        if (usedStreetIds.has(candidate.id)) continue;
 
-        // Check if connected or nearby
+        const candidateDoors = calculateDoorsForStreet(candidate);
+        const totalDoors = currentDoors + candidateDoors;
+
+        // Skip if it would exceed max
+        if (totalDoors > maxDoors) continue;
+
+        // Check connection/proximity to existing route
         let isConnected = false;
-        let minDistanceToRoute = Infinity;
+        let minDistToRoute = Infinity;
 
         for (const routeStreet of routeStreets) {
-          if (streetsAreConnected(street, routeStreet)) {
+          if (streetsConnected(candidate, routeStreet)) {
             isConnected = true;
             break;
           }
-
-          const dist = getStreetCenter(street).distanceTo(getStreetCenter(routeStreet));
-          minDistanceToRoute = Math.min(minDistanceToRoute, dist);
+          const dist = getStreetCenter(candidate).distanceTo(getStreetCenter(routeStreet));
+          minDistToRoute = Math.min(minDistToRoute, dist);
         }
 
-        // Only accept if connected or very close (within 80m)
-        if (!isConnected && minDistanceToRoute > 80) continue;
+        // Only accept if connected or within 75m
+        if (!isConnected && minDistToRoute > 75) continue;
 
-        // Check if adding this would cause overlap
-        const testStreets = [...routeStreets, street];
-        const testBoundary = createTightBoundary(testStreets, areaBounds);
+        // Score: prefer connected streets, then closer streets, then streets that get us closer to target
+        const connectionScore = isConnected ? 1000 : 500;
+        const distanceScore = -minDistToRoute;
+        const targetScore = totalDoors >= minDoors ? 100 : 0; // Bonus if we hit target
+        const score = connectionScore + distanceScore + targetScore;
 
-        if (testBoundary.length < 4) continue;
-
-        // Check against all existing boundaries
-        let wouldOverlap = false;
-        for (const existingBoundary of existingBoundaries) {
-          if (rectanglesOverlap(testBoundary, existingBoundary)) {
-            wouldOverlap = true;
-            break;
-          }
-        }
-
-        if (wouldOverlap) continue;
-
-        // Check if it would exceed door limit
-        const wouldBeDoors = estimateDoorsForStreets(testStreets);
-        if (wouldBeDoors > targetDoorsPerRoute * 1.5) continue;
-
-        // Prefer connected streets, then closer streets
-        const score = isConnected ? 1000 - minDistanceToRoute : 500 - minDistanceToRoute;
         if (score > bestScore) {
           bestScore = score;
-          bestStreet = street;
+          bestStreet = candidate;
         }
       }
 
       if (bestStreet) {
         routeStreets.push(bestStreet);
         usedStreetIds.add(bestStreet.id);
+        currentDoors += calculateDoorsForStreet(bestStreet);
+
+        // Stop if we're in the good range
+        if (currentDoors >= minDoors && currentDoors <= maxDoors) {
+          keepSearching = false;
+        }
       } else {
-        searching = false;
+        keepSearching = false;
       }
     }
 
-    // Create final boundary
-    const doorCount = estimateDoorsForStreets(routeStreets);
-    const boundary = createTightBoundary(routeStreets, areaBounds);
+    // Only accept routes that meet minimum
+    if (currentDoors >= minDoors * 0.9) { // Allow slightly below if we tried
+      const boundary = createStreetPolygon(routeStreets, areaBounds);
 
-    if (boundary.length >= 4) {
-      // Final overlap check
-      let overlaps = false;
-      for (const existingBoundary of existingBoundaries) {
-        if (rectanglesOverlap(boundary, existingBoundary)) {
-          overlaps = true;
-          break;
-        }
-      }
-
-      if (!overlaps) {
-        existingBoundaries.push(boundary);
+      if (boundary.length >= 3) {
         routes.push({
           streets: routeStreets,
-          doorCount,
+          doorCount: currentDoors,
           boundary,
         });
       }
