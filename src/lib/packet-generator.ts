@@ -104,7 +104,7 @@ async function generateStreetAwarePackets(
   const packetsNeeded = Math.ceil(volunteers / groupSize);
 
   // Build walkable routes from connected streets
-  const routes = buildWalkableRoutes(streets, doorsPerPacket, packetsNeeded);
+  const routes = buildWalkableRoutes(streets, doorsPerPacket, packetsNeeded, areaBounds);
 
   if (routes.length === 0) {
     throw new Error('No walkable routes identified');
