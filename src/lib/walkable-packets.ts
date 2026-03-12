@@ -65,49 +65,9 @@ function streetsAreConnected(street1: StreetSegment, street2: StreetSegment, thr
 }
 
 /**
- * Create a walking boundary around streets (following the street shape)
+ * Create a tight rectangular boundary around streets
  */
-function createWalkingBoundary(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
-  // Collect all street points
-  const allPoints: LatLng[] = [];
-
-  for (const street of streets) {
-    for (const point of street.coordinates) {
-      // Only include points within bounds
-      if (areaBounds.contains(point)) {
-        allPoints.push(point);
-
-        // Add buffer points around each street point (creates walkable area on both sides)
-        const buffer = 0.00015; // ~15 meters
-        const angles = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]; // 4 directions
-
-        for (const angle of angles) {
-          const bufferedPoint = new LatLng(
-            point.lat + buffer * Math.cos(angle),
-            point.lng + buffer * Math.sin(angle)
-          );
-
-          if (areaBounds.contains(bufferedPoint)) {
-            allPoints.push(bufferedPoint);
-          }
-        }
-      }
-    }
-  }
-
-  if (allPoints.length < 3) {
-    // Fallback to bounding box
-    return createBoundingBox(streets, areaBounds);
-  }
-
-  // Create convex hull
-  return createConvexHull(allPoints);
-}
-
-/**
- * Create a simple bounding box
- */
-function createBoundingBox(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
+function createTightBoundary(streets: StreetSegment[], areaBounds: LatLngBounds): LatLng[] {
   const lats: number[] = [];
   const lngs: number[] = [];
 
@@ -122,60 +82,49 @@ function createBoundingBox(streets: StreetSegment[], areaBounds: LatLngBounds): 
 
   if (lats.length === 0) return [];
 
-  const buffer = 0.00015;
+  // Very small buffer - just 10 meters
+  const buffer = 0.00009;
   const sw = areaBounds.getSouthWest();
   const ne = areaBounds.getNorthEast();
 
+  const minLat = Math.max(Math.min(...lats) - buffer, sw.lat);
+  const maxLat = Math.min(Math.max(...lats) + buffer, ne.lat);
+  const minLng = Math.max(Math.min(...lngs) - buffer, sw.lng);
+  const maxLng = Math.min(Math.max(...lngs) + buffer, ne.lng);
+
   return [
-    new LatLng(Math.max(Math.min(...lats) - buffer, sw.lat), Math.max(Math.min(...lngs) - buffer, sw.lng)),
-    new LatLng(Math.max(Math.min(...lats) - buffer, sw.lat), Math.min(Math.max(...lngs) + buffer, ne.lng)),
-    new LatLng(Math.min(Math.max(...lats) + buffer, ne.lat), Math.min(Math.max(...lngs) + buffer, ne.lng)),
-    new LatLng(Math.min(Math.max(...lats) + buffer, ne.lat), Math.max(Math.min(...lngs) - buffer, sw.lng)),
-    new LatLng(Math.max(Math.min(...lats) - buffer, sw.lat), Math.max(Math.min(...lngs) - buffer, sw.lng)),
+    new LatLng(minLat, minLng),
+    new LatLng(minLat, maxLng),
+    new LatLng(maxLat, maxLng),
+    new LatLng(maxLat, minLng),
+    new LatLng(minLat, minLng),
   ];
 }
 
 /**
- * Convex hull using Gift wrapping algorithm
+ * Check if two rectangular polygons overlap
  */
-function createConvexHull(points: LatLng[]): LatLng[] {
-  if (points.length < 3) return points;
+function rectanglesOverlap(rect1: LatLng[], rect2: LatLng[]): boolean {
+  if (rect1.length < 4 || rect2.length < 4) return false;
 
-  // Find leftmost point
-  let leftmost = points[0];
-  for (const p of points) {
-    if (p.lng < leftmost.lng || (p.lng === leftmost.lng && p.lat < leftmost.lat)) {
-      leftmost = p;
-    }
-  }
+  // Get bounds of each rectangle
+  const r1MinLat = Math.min(rect1[0].lat, rect1[2].lat);
+  const r1MaxLat = Math.max(rect1[0].lat, rect1[2].lat);
+  const r1MinLng = Math.min(rect1[0].lng, rect1[2].lng);
+  const r1MaxLng = Math.max(rect1[0].lng, rect1[2].lng);
 
-  const hull: LatLng[] = [];
-  let current = leftmost;
+  const r2MinLat = Math.min(rect2[0].lat, rect2[2].lat);
+  const r2MaxLat = Math.max(rect2[0].lat, rect2[2].lat);
+  const r2MinLng = Math.min(rect2[0].lng, rect2[2].lng);
+  const r2MaxLng = Math.max(rect2[0].lng, rect2[2].lng);
 
-  do {
-    hull.push(current);
-    let next = points[0];
-
-    for (const p of points) {
-      if (p === current) continue;
-
-      const cross = (next.lat - current.lat) * (p.lng - current.lng) -
-                   (next.lng - current.lng) * (p.lat - current.lat);
-
-      if (next === current || cross > 0 ||
-          (cross === 0 && distanceSquared(current, p) > distanceSquared(current, next))) {
-        next = p;
-      }
-    }
-
-    current = next;
-  } while (current !== leftmost && hull.length < points.length);
-
-  return hull;
-}
-
-function distanceSquared(a: LatLng, b: LatLng): number {
-  return Math.pow(a.lat - b.lat, 2) + Math.pow(a.lng - b.lng, 2);
+  // Check if rectangles overlap
+  return !(
+    r1MaxLat <= r2MinLat ||
+    r1MinLat >= r2MaxLat ||
+    r1MaxLng <= r2MinLng ||
+    r1MinLng >= r2MaxLng
+  );
 }
 
 function getStreetCenter(street: StreetSegment): LatLng {
@@ -189,7 +138,7 @@ function getStreetCenter(street: StreetSegment): LatLng {
 }
 
 /**
- * Build walkable routes that make sense for humans
+ * Build walkable routes with NO overlapping
  */
 export function buildWalkableRoutes(
   allStreets: StreetSegment[],
@@ -199,6 +148,7 @@ export function buildWalkableRoutes(
 ): { streets: StreetSegment[]; doorCount: number; boundary: LatLng[] }[] {
   const routes: { streets: StreetSegment[]; doorCount: number; boundary: LatLng[] }[] = [];
   const usedStreetIds = new Set<string>();
+  const existingBoundaries: LatLng[][] = [];
 
   // Filter streets within bounds
   const streets = allStreets.filter(street =>
@@ -214,7 +164,7 @@ export function buildWalkableRoutes(
 
   const areaCenter = areaBounds.getCenter();
 
-  for (let i = 0; i < numRoutes; i++) {
+  for (let routeIdx = 0; routeIdx < numRoutes; routeIdx++) {
     // Find unused street closest to center as seed
     let seedStreet: StreetSegment | null = null;
     let minDist = Infinity;
@@ -229,15 +179,16 @@ export function buildWalkableRoutes(
       }
     }
 
-    if (!seedStreet) break;
+    if (!seedStreet) break; // No more streets
 
     const routeStreets: StreetSegment[] = [seedStreet];
     usedStreetIds.add(seedStreet.id);
 
     // Build connected walking route
-    let addedAny = true;
-    while (addedAny && routeStreets.length < 8) {
-      addedAny = false;
+    let searching = true;
+    const maxStreetsInRoute = 6; // Limit route size
+
+    while (searching && routeStreets.length < maxStreetsInRoute) {
       const currentDoors = estimateDoorsForStreets(routeStreets);
 
       // Stop if we've reached target range
@@ -245,55 +196,94 @@ export function buildWalkableRoutes(
         break;
       }
 
-      // Stop if we're way over
+      // Stop if we're over
       if (currentDoors > targetDoorsPerRoute * 1.5) {
         break;
       }
 
-      // Find connected streets
+      // Find next connected street
+      let bestStreet: StreetSegment | null = null;
+      let bestScore = -1;
+
       for (const street of sortedStreets) {
         if (usedStreetIds.has(street.id)) continue;
 
-        // Check if connected to any street in route
+        // Check if connected or nearby
         let isConnected = false;
+        let minDistanceToRoute = Infinity;
+
         for (const routeStreet of routeStreets) {
           if (streetsAreConnected(street, routeStreet)) {
             isConnected = true;
             break;
           }
+
+          const dist = getStreetCenter(street).distanceTo(getStreetCenter(routeStreet));
+          minDistanceToRoute = Math.min(minDistanceToRoute, dist);
         }
 
-        // Also accept nearby streets (within 100m)
-        if (!isConnected) {
-          for (const routeStreet of routeStreets) {
-            if (getStreetCenter(street).distanceTo(getStreetCenter(routeStreet)) < 100) {
-              isConnected = true;
-              break;
-            }
-          }
-        }
+        // Only accept if connected or very close (within 80m)
+        if (!isConnected && minDistanceToRoute > 80) continue;
 
-        if (isConnected) {
-          const wouldBeDoors = estimateDoorsForStreets([...routeStreets, street]);
-          if (wouldBeDoors <= targetDoorsPerRoute * 1.5) {
-            routeStreets.push(street);
-            usedStreetIds.add(street.id);
-            addedAny = true;
+        // Check if adding this would cause overlap
+        const testStreets = [...routeStreets, street];
+        const testBoundary = createTightBoundary(testStreets, areaBounds);
+
+        if (testBoundary.length < 4) continue;
+
+        // Check against all existing boundaries
+        let wouldOverlap = false;
+        for (const existingBoundary of existingBoundaries) {
+          if (rectanglesOverlap(testBoundary, existingBoundary)) {
+            wouldOverlap = true;
             break;
           }
         }
+
+        if (wouldOverlap) continue;
+
+        // Check if it would exceed door limit
+        const wouldBeDoors = estimateDoorsForStreets(testStreets);
+        if (wouldBeDoors > targetDoorsPerRoute * 1.5) continue;
+
+        // Prefer connected streets, then closer streets
+        const score = isConnected ? 1000 - minDistanceToRoute : 500 - minDistanceToRoute;
+        if (score > bestScore) {
+          bestScore = score;
+          bestStreet = street;
+        }
+      }
+
+      if (bestStreet) {
+        routeStreets.push(bestStreet);
+        usedStreetIds.add(bestStreet.id);
+      } else {
+        searching = false;
       }
     }
 
+    // Create final boundary
     const doorCount = estimateDoorsForStreets(routeStreets);
-    const boundary = createWalkingBoundary(routeStreets, areaBounds);
+    const boundary = createTightBoundary(routeStreets, areaBounds);
 
-    if (boundary.length >= 3) {
-      routes.push({
-        streets: routeStreets,
-        doorCount,
-        boundary,
-      });
+    if (boundary.length >= 4) {
+      // Final overlap check
+      let overlaps = false;
+      for (const existingBoundary of existingBoundaries) {
+        if (rectanglesOverlap(boundary, existingBoundary)) {
+          overlaps = true;
+          break;
+        }
+      }
+
+      if (!overlaps) {
+        existingBoundaries.push(boundary);
+        routes.push({
+          streets: routeStreets,
+          doorCount,
+          boundary,
+        });
+      }
     }
   }
 
