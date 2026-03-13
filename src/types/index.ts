@@ -5,6 +5,7 @@ export interface EventConfig {
   volunteers: number;
   groupSize: number;
   doorsPerPacket: number;
+  carAvailability?: 'all' | 'some' | 'none';
   mapCenter?: LatLng;
   mapZoom?: number;
 }

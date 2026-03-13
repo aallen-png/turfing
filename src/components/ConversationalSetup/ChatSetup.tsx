@@ -26,12 +26,18 @@ interface QuickReply {
   description?: string;
 }
 
-type Step = 'welcome' | 'areaChoice' | 'address' | 'volunteers' | 'groupSize' | 'doors' | 'drawPrompt' | 'complete';
+type Step = 'welcome' | 'areaChoice' | 'address' | 'volunteers' | 'groupSize' | 'cars' | 'doors' | 'drawPrompt' | 'complete';
 
 const PRESET_GROUP_SIZES: QuickReply[] = [
   { label: 'Solo (1)', value: 1 },
   { label: 'Pairs (2)', value: 2 },
   { label: 'Groups of 3', value: 3 },
+];
+
+const CAR_AVAILABILITY: QuickReply[] = [
+  { label: '🚗 All have cars', value: 'all', description: 'Can spread packets out' },
+  { label: '🚗 Some have cars', value: 'some', description: 'Mix of driving & walking' },
+  { label: '🚶 None have cars', value: 'none', description: 'Walking distance only' },
 ];
 
 const PRESET_DOOR_COUNTS: QuickReply[] = [
@@ -92,7 +98,14 @@ export function ChatSetup({ onComplete, hasAreaSelected, onMapCenterChange, onAu
 
       case 'groupSize':
         setConfig({ ...config, groupSize: reply.value });
-        addMessage('bot', "Got it! How many doors should each team knock? (This determines the size of each walking route)");
+        addMessage('bot', "Do volunteers have access to cars?");
+        setQuickReplies(CAR_AVAILABILITY);
+        setStep('cars');
+        break;
+
+      case 'cars':
+        setConfig({ ...config, carAvailability: reply.value });
+        addMessage('bot', "Perfect! How many doors should each team knock? (This determines the size of each walking route)");
         setQuickReplies(PRESET_DOOR_COUNTS);
         setStep('doors');
         break;
